@@ -12,6 +12,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
 
+	"sync"
+
 	"github.com/fatih/color"
 )
 
@@ -49,7 +51,7 @@ func main() {
 	err := survey.AskOne(prompt, &selectedRegion)
 	if err != nil {
 		fmt.Println("Failed to get user input:", err)
-		return
+		log.Fatalf("Failed to get user input: %v", err)
 	}
 	fmt.Println("Selected region:", selectedRegion)
 
@@ -153,17 +155,30 @@ func main() {
 		logGroups, err = listLogGroups(ctx, cwlClient)
 		if err != nil {
 			color.Red("Error listing log groups in region %s: %v\n", selectedRegion, err)
-			return
+
 		}
 		fmt.Printf("Found %d log groups in region %s\n", len(logGroups), selectedRegion)
 	} else {
 		logGroups = []string{logGroupName}
 	}
 
-	// Search logs within the specified timeframe
+	// Use routines and parallelisation to search for five long groups at a time But make sure that there is no throttling exception or handle the throttling exception
+	sem := make(chan struct{}, 5) // Semaphore to limit concurrency to 5
+	var wg sync.WaitGroup
+
 	for _, logGroup := range logGroups {
-		searchLogs(ctx, cwlClient, logGroup, filterPattern, startTime, endTime)
+		wg.Add(1)
+		sem <- struct{}{} // Acquire a slot
+
+		go func(logGroup string) {
+			defer wg.Done()
+			defer func() { <-sem }() // Release the slot
+
+			retrySearchLogs(ctx, cwlClient, logGroup, filterPattern, startTime, endTime)
+		}(logGroup)
 	}
+
+	wg.Wait()
 
 }
 
@@ -182,7 +197,33 @@ func promptTimeframe() string {
 	return timeframe
 }
 
-func searchLogs(ctx context.Context, client *cloudwatchlogs.Client, logGroupName, filterPattern string, startTime, endTime time.Time) {
+func retrySearchLogs(ctx context.Context, client *cloudwatchlogs.Client, logGroupName, filterPattern string, startTime, endTime time.Time) error {
+	const maxRetries = 5
+	var err error
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		err = searchLogs(ctx, client, logGroupName, filterPattern, startTime, endTime)
+		if err == nil {
+			// Success, no need to retry
+			return nil
+		}
+
+		color.Red("Error searching logs in log group: %s. Attempt %d/%d - Error: %v\n", logGroupName, attempt, maxRetries, err)
+
+		if attempt < maxRetries {
+			// Exponential backoff
+			waitTime := time.Duration(attempt*attempt) * time.Second
+			color.Yellow("Retrying log group: %s after %v...\n", logGroupName, waitTime)
+			time.Sleep(waitTime)
+		}
+	}
+	// If we reach here, we've exhausted all retries
+	color.Red("Max retries reached for log group: %s\n", logGroupName)
+	return err
+}
+
+func searchLogs(ctx context.Context, client *cloudwatchlogs.Client, logGroupName, filterPattern string, startTime, endTime time.Time) error {
+
 	// Implement the logic to search logs within the specified timeframe
 	// using the CloudWatch Logs client
 	fmt.Printf("Searching logs in log group: %s\n", logGroupName)
@@ -200,7 +241,8 @@ func searchLogs(ctx context.Context, client *cloudwatchlogs.Client, logGroupName
 		output, err := paginator.NextPage(ctx)
 		if err != nil {
 			color.Red("Error fetching log events: %v\n", err)
-			return
+			return err
+
 		}
 		// When a match is found, then print a message with the green tech saying that a match has been found in Log group
 		if len(output.Events) > 0 {
@@ -211,19 +253,5 @@ func searchLogs(ctx context.Context, client *cloudwatchlogs.Client, logGroupName
 			fmt.Printf("[%s] %s\n", time.Unix(0, *event.Timestamp*int64(time.Millisecond)).Format(time.RFC3339), *event.Message)
 		}
 	}
-}
-
-func promptSelectRegion(regions []string) string {
-	var selectedRegion string
-	prompt := &survey.Select{
-		Message: "Select Region:Default is eu-west-1",
-		// Hard-core all available regions
-
-		Options: regions,
-		Default: "eu-west-1",
-	}
-	if err := survey.AskOne(prompt, &selectedRegion); err != nil {
-		log.Fatalf("Error selecting region: %v", err)
-	}
-	return selectedRegion
+	return nil
 }

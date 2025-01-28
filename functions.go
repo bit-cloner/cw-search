@@ -3,12 +3,10 @@ package main
 import (
 	"context"
 	"log"
-	"sort"
 
 	"github.com/AlecAivazis/survey/v2"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
-	"github.com/aws/aws-sdk-go-v2/service/ec2"
 )
 
 func promptInput(message string) string {
@@ -17,36 +15,6 @@ func promptInput(message string) string {
 		log.Fatalf("Error reading input: %v", err)
 	}
 	return input
-}
-
-func promptSelectRegions(regions []string) []string {
-	var selectedRegions []string
-	prompt := &survey.MultiSelect{
-		Message:  "Select Regions:Default is eu-west-1",
-		Options:  regions,
-		PageSize: 15,
-		Default:  "eu-west-1",
-	}
-	if err := survey.AskOne(prompt, &selectedRegions); err != nil {
-		log.Fatalf("Error selecting regions: %v", err)
-	}
-	return selectedRegions
-}
-
-// getAllRegions retrieves all AWS regions
-func getAllRegions(ctx context.Context, cfg aws.Config) ([]string, error) {
-	client := ec2.NewFromConfig(cfg)
-	output, err := client.DescribeRegions(ctx, &ec2.DescribeRegionsInput{})
-	if err != nil {
-		return nil, err
-	}
-
-	var regions []string
-	for _, region := range output.Regions {
-		regions = append(regions, *region.RegionName)
-	}
-	sort.Strings(regions)
-	return regions, nil
 }
 
 // listLogGroups lists all log groups in a specific region
