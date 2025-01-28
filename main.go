@@ -16,12 +16,48 @@ import (
 )
 
 func main() {
-	ctx := context.Background()
-
-	// Load AWS configuration
-	cfg, err := config.LoadDefaultConfig(ctx)
+	// Create a list of regions
+	regionNames := []string{
+		"us-east-1",
+		"us-east-2",
+		"us-west-1",
+		"us-west-2",
+		"af-south-1",
+		"ap-east-1",
+		"ap-south-1",
+		"ap-northeast-3",
+		"ap-northeast-2",
+		"ap-southeast-1",
+		"ap-southeast-2",
+		"ca-central-1",
+		"eu-central-1",
+		"eu-west-1",
+		"eu-west-2",
+		"eu-south-1",
+		"eu-west-3",
+		"eu-north-1",
+		"me-south-1",
+		"sa-east-1",
+	}
+	var selectedRegion string
+	prompt := &survey.Select{
+		Message:  "Select a region:",
+		Options:  regionNames,
+		Default:  "eu-west-1",
+		PageSize: 15,
+	}
+	err := survey.AskOne(prompt, &selectedRegion)
 	if err != nil {
-		log.Fatalf("Unable to load AWS config: %v", err)
+		fmt.Println("Failed to get user input:", err)
+		return
+	}
+	fmt.Println("Selected region:", selectedRegion)
+
+	ctx := context.Background()
+	// Load AWS configuration With default region as eu-west-1
+	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(selectedRegion))
+	if err != nil {
+		log.Fatalf("Error loading configuration: %v", err)
 	}
 
 	// Prompt for input
@@ -109,34 +145,26 @@ func main() {
 		startTime = endTime.Add(-6 * time.Hour)
 	}
 
-	// Fetch all regions
-	regions, err := getAllRegions(ctx, cfg)
-	if err != nil {
-		log.Fatalf("Error retrieving regions: %v", err)
-	}
-
-	// Prompt user to select regions
-	promptSelectRegions(regions)
-
-	// Iterate over regions and log groups
+	// Iterate over log groups
 	cwlClient := cloudwatchlogs.NewFromConfig(cfg)
-	for _, reg := range regions {
-		var logGroups []string
-		if logGroupName == "ALL" {
-			logGroups, err = listLogGroups(ctx, cwlClient)
-			if err != nil {
-				color.Red("Error listing log groups in region %s: %v\n", reg, err)
-				continue
-			}
-		} else {
-			logGroups = []string{logGroupName}
-		}
 
-		// Search logs within the specified timeframe
-		for _, logGroup := range logGroups {
-			searchLogs(ctx, cwlClient, logGroup, filterPattern, startTime, endTime)
+	var logGroups []string
+	if logGroupName == "ALL" {
+		logGroups, err = listLogGroups(ctx, cwlClient)
+		if err != nil {
+			color.Red("Error listing log groups in region %s: %v\n", selectedRegion, err)
+			return
 		}
+		fmt.Printf("Found %d log groups in region %s\n", len(logGroups), selectedRegion)
+	} else {
+		logGroups = []string{logGroupName}
 	}
+
+	// Search logs within the specified timeframe
+	for _, logGroup := range logGroups {
+		searchLogs(ctx, cwlClient, logGroup, filterPattern, startTime, endTime)
+	}
+
 }
 
 func promptTimeframe() string {
@@ -183,4 +211,19 @@ func searchLogs(ctx context.Context, client *cloudwatchlogs.Client, logGroupName
 			fmt.Printf("[%s] %s\n", time.Unix(0, *event.Timestamp*int64(time.Millisecond)).Format(time.RFC3339), *event.Message)
 		}
 	}
+}
+
+func promptSelectRegion(regions []string) string {
+	var selectedRegion string
+	prompt := &survey.Select{
+		Message: "Select Region:Default is eu-west-1",
+		// Hard-core all available regions
+
+		Options: regions,
+		Default: "eu-west-1",
+	}
+	if err := survey.AskOne(prompt, &selectedRegion); err != nil {
+		log.Fatalf("Error selecting region: %v", err)
+	}
+	return selectedRegion
 }
