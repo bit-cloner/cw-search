@@ -1,9 +1,6 @@
-name: Release Binaries
-
 on:
-  push:
-    tags:
-      - 'v*'
+  release:
+    types: [created]
 
 jobs:
   build:
