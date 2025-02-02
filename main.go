@@ -244,13 +244,15 @@ func searchLogs(ctx context.Context, client *cloudwatchlogs.Client, logGroupName
 			return err
 
 		}
-		// When a match is found, then print a message with the green tech saying that a match has been found in Log group
+		// When a match is found, then print a message with the green text saying that a match has been found in Log group
 		if len(output.Events) > 0 {
 			color.Green("Match found in log group: %s\n", logGroupName)
 		}
 
+		// Print log stream name for each block of events
 		for _, event := range output.Events {
-			fmt.Printf("[%s] %s\n", time.Unix(0, *event.Timestamp*int64(time.Millisecond)).Format(time.RFC3339), *event.Message)
+			color.Cyan("Log Stream: %s\n", *event.LogStreamName)
+			fmt.Printf("[%s] %s ", time.Unix(0, *event.Timestamp*int64(time.Millisecond)).Format(time.RFC3339), *event.Message)
 		}
 	}
 	return nil
